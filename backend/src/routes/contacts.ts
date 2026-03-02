@@ -17,10 +17,14 @@ router.post('/sync', authMiddleware, async (req: AuthenticatedRequest, res: Resp
   const session = getSession();
 
   try {
-    // Ensure current user exists as a node
+    // Ensure current user exists as a node — save name, email, and phone
     await session.run(
-      'MERGE (u:User {uid: $uid}) SET u.email = $email RETURN u',
-      { uid, email: req.email },
+      `MERGE (u:User {uid: $uid})
+       SET u.email = $email,
+           u.name = COALESCE($name, u.name),
+           u.phone = COALESCE($phone, u.phone)
+       RETURN u`,
+      { uid, email: req.email, name: req.displayName ?? null, phone: req.phone ?? null },
     );
 
     // Create contact nodes and relationships

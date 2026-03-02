@@ -4,6 +4,8 @@ import { getAuth, clerkClient } from '@clerk/express';
 export interface AuthenticatedRequest extends Request {
   uid?: string;
   email?: string;
+  phone?: string;
+  displayName?: string;
 }
 
 export async function authMiddleware(
@@ -23,6 +25,8 @@ export async function authMiddleware(
 
     req.uid = auth.userId;
     req.email = user.emailAddresses[0]?.emailAddress;
+    req.phone = user.phoneNumbers[0]?.phoneNumber ?? undefined;
+    req.displayName = [user.firstName, user.lastName].filter(Boolean).join(' ') || undefined;
     next();
   } catch (error) {
     console.error('Auth error:', error);
