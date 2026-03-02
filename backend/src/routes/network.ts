@@ -133,4 +133,71 @@ router.get('/connection/:targetUid', authMiddleware, async (req: AuthenticatedRe
   }
 });
 
+// Get mutual connections between current user and a contact
+router.get('/mutual/:contactPhone', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const uid = req.uid!;
+  const { contactPhone } = req.params;
+
+  const session = getSession();
+
+  try {
+    // Find mutual contacts between the user and the specified contact
+    const result = await session.run(
+      `
+      MATCH (me:User {uid: $uid})-[:KNOWS]->(myContact:Contact)
+      MATCH (targetContact:Contact {phone: $contactPhone})-[:IS_USER]->(targetUser:User)-[:KNOWS]->(mutualContact:Contact)
+      WHERE myContact.phone = mutualContact.phone
+        AND myContact.phone <> $contactPhone
+        AND myContact.phone <> me.phone
+      OPTIONAL MATCH (mutualContact)-[:IS_USER]->(mutualUser:User)
+      RETURN DISTINCT myContact.name AS name, 
+             myContact.phone AS phone,
+             CASE WHEN mutualUser IS NOT NULL THEN true ELSE false END AS isUser,
+             mutualUser.uid AS linkedUid
+      ORDER BY myContact.name
+      `,
+      { uid, contactPhone },
+    );
+
+    const mutualConnections = result.records.map((record) => ({
+      name: record.get('name') as string,
+      phone: record.get('phone') as string,
+      isUser: record.get('isUser') as boolean,
+      linkedUid: record.get('linkedUid') as string | null,
+    }));
+
+    // Get the target contact info
+    const targetResult = await session.run(
+      `MATCH (c:Contact {phone: $contactPhone})
+       OPTIONAL MATCH (c)-[:IS_USER]->(u:User)
+       RETURN c.name AS name, c.phone AS phone,
+              CASE WHEN u IS NOT NULL THEN true ELSE false END AS isUser,
+              u.uid AS linkedUid`,
+      { contactPhone },
+    );
+
+    let targetContact = null;
+    if (targetResult.records.length > 0) {
+      const record = targetResult.records[0];
+      targetContact = {
+        name: record.get('name') as string,
+        phone: record.get('phone') as string,
+        isUser: record.get('isUser') as boolean,
+        linkedUid: record.get('linkedUid') as string | null,
+      };
+    }
+
+    res.json({
+      targetContact,
+      mutualConnections,
+      count: mutualConnections.length,
+    });
+  } catch (error) {
+    console.error('Failed to get mutual connections:', error);
+    res.status(500).json({ error: 'Failed to get mutual connections' });
+  } finally {
+    await session.close();
+  }
+});
+
 export default router;

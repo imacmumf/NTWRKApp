@@ -4,6 +4,24 @@ import { AuthenticatedRequest, authMiddleware } from '../middleware/auth';
 
 const router = Router();
 
+/**
+ * Normalize a phone number to a consistent digits-only format.
+ * Strips all non-digit characters, then ensures a leading "1" for US numbers
+ * so that "+1 (555) 123-4567", "5551234567", and "15551234567" all become "15551234567".
+ */
+function normalizePhone(raw: string): string {
+  // Strip everything except digits and a leading +
+  let digits = raw.replace(/[^\d]/g, '');
+
+  // If it starts with country code "1" and is 11 digits, that's US (+1...)
+  // If it's 10 digits, prepend "1" for US default
+  if (digits.length === 10) {
+    digits = '1' + digits;
+  }
+
+  return digits;
+}
+
 // Sync contacts to Neo4j
 router.post('/sync', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   const { contacts } = req.body as { contacts: { name: string; phone: string }[] };
@@ -17,6 +35,9 @@ router.post('/sync', authMiddleware, async (req: AuthenticatedRequest, res: Resp
   const session = getSession();
 
   try {
+    // Normalize the current user's phone too
+    const userPhone = req.phone ? normalizePhone(req.phone) : null;
+
     // Ensure current user exists as a node — save name, email, and phone
     await session.run(
       `MERGE (u:User {uid: $uid})
@@ -24,11 +45,14 @@ router.post('/sync', authMiddleware, async (req: AuthenticatedRequest, res: Resp
            u.name = COALESCE($name, u.name),
            u.phone = COALESCE($phone, u.phone)
        RETURN u`,
-      { uid, email: req.email, name: req.displayName ?? null, phone: req.phone ?? null },
+      { uid, email: req.email, name: req.displayName ?? null, phone: userPhone },
     );
 
-    // Create contact nodes and relationships
+    // Create contact nodes and relationships with normalized phone
     for (const contact of contacts) {
+      const phone = normalizePhone(contact.phone);
+      if (!phone) continue; // skip contacts with no usable phone
+
       await session.run(
         `
         MATCH (u:User {uid: $uid})
@@ -36,7 +60,7 @@ router.post('/sync', authMiddleware, async (req: AuthenticatedRequest, res: Resp
         SET c.name = $name
         MERGE (u)-[:KNOWS]->(c)
         `,
-        { uid, phone: contact.phone, name: contact.name },
+        { uid, phone, name: contact.name },
       );
     }
 
@@ -54,6 +78,95 @@ router.post('/sync', authMiddleware, async (req: AuthenticatedRequest, res: Resp
   } catch (error) {
     console.error('Failed to sync contacts:', error);
     res.status(500).json({ error: 'Failed to sync contacts' });
+  } finally {
+    await session.close();
+  }
+});
+
+// Manually add a single contact
+router.post('/add', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { name, phone, email } = req.body as { name: string; phone: string; email?: string };
+  const uid = req.uid!;
+
+  if (!name || !phone) {
+    res.status(400).json({ error: 'name and phone are required' });
+    return;
+  }
+
+  const normalizedPhone = normalizePhone(phone);
+  if (normalizedPhone.length < 7) {
+    res.status(400).json({ error: 'Invalid phone number' });
+    return;
+  }
+
+  const session = getSession();
+
+  try {
+    // 1. Ensure the current user node exists
+    const userPhone = req.phone ? normalizePhone(req.phone) : null;
+    await session.run(
+      `MERGE (u:User {uid: $uid})
+       SET u.email = $email,
+           u.name = COALESCE($name, u.name),
+           u.phone = COALESCE($phone, u.phone)
+       RETURN u`,
+      { uid, email: req.email, name: req.displayName ?? null, phone: userPhone },
+    );
+
+    // 2. Create or merge the Contact node with the normalized phone
+    //    Store optional email on the Contact node too
+    await session.run(
+      `
+      MATCH (u:User {uid: $uid})
+      MERGE (c:Contact {phone: $phone})
+      SET c.name = $name
+      ${email ? ', c.email = $email' : ''}
+      MERGE (u)-[:KNOWS]->(c)
+      `,
+      { uid, phone: normalizedPhone, name, email: email || null },
+    );
+
+    // 3. Check if this contact matches an existing User (by phone)
+    //    and create the IS_USER link if so
+    const linkResult = await session.run(
+      `
+      MATCH (c:Contact {phone: $phone})
+      MATCH (target:User {phone: $phone})
+      MERGE (c)-[:IS_USER]->(target)
+      RETURN target.uid AS targetUid, target.name AS targetName
+      `,
+      { phone: normalizedPhone },
+    );
+
+    // 4. If the target person is a user AND they also have the current user
+    //    in their contacts, create the reciprocal IS_USER link too
+    if (linkResult.records.length > 0) {
+      await session.run(
+        `
+        MATCH (target:User {phone: $targetPhone})-[:KNOWS]->(c:Contact {phone: $myPhone})
+        MATCH (me:User {uid: $uid})
+        MERGE (c)-[:IS_USER]->(me)
+        `,
+        { targetPhone: normalizedPhone, myPhone: userPhone, uid },
+      );
+    }
+
+    const isUser = linkResult.records.length > 0;
+    const targetName = isUser ? linkResult.records[0].get('targetName') : null;
+
+    res.json({
+      message: 'Contact added',
+      contact: {
+        name,
+        phone: normalizedPhone,
+        email: email || null,
+        isUser,
+        linkedName: targetName,
+      },
+    });
+  } catch (error) {
+    console.error('Failed to add contact:', error);
+    res.status(500).json({ error: 'Failed to add contact' });
   } finally {
     await session.close();
   }
