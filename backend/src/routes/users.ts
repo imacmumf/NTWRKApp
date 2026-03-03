@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { getSession } from '../config/neo4j';
 import { AuthenticatedRequest, authMiddleware } from '../middleware/auth';
+import { normalizePhone } from '../utils/normalizePhone';
 
 const router = Router();
 
@@ -112,6 +113,7 @@ router.put('/me', authMiddleware, async (req: AuthenticatedRequest, res: Respons
     company, jobTitle, industry, hometown, bio,
   } = req.body as Record<string, string | undefined>;
   const session = getSession();
+  const normalizedPhone = phone ? normalizePhone(phone) : null;
 
   try {
     await session.run(
@@ -130,7 +132,7 @@ router.put('/me', authMiddleware, async (req: AuthenticatedRequest, res: Respons
        RETURN u`,
       {
         uid, email: req.email,
-        name: name ?? null, phone: phone ?? null,
+        name: name ?? null, phone: normalizedPhone,
         location: location ?? null, college: college ?? null,
         highSchool: highSchool ?? null, company: company ?? null,
         jobTitle: jobTitle ?? null, industry: industry ?? null,
@@ -139,12 +141,12 @@ router.put('/me', authMiddleware, async (req: AuthenticatedRequest, res: Respons
     );
 
     // Re-link any contacts that match this phone number
-    if (phone) {
+    if (normalizedPhone) {
       await session.run(
         `MATCH (c:Contact {phone: $phone})
          MATCH (u:User {uid: $uid})
          MERGE (c)-[:IS_USER]->(u)`,
-        { phone, uid },
+        { phone: normalizedPhone, uid },
       );
     }
 

@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { getSession } from '../config/neo4j';
 import { AuthenticatedRequest, authMiddleware } from '../middleware/auth';
+import { normalizePhone } from '../utils/normalizePhone';
 
 const router = Router();
 
@@ -136,7 +137,7 @@ router.get('/connection/:targetUid', authMiddleware, async (req: AuthenticatedRe
 // Get mutual connections between current user and a contact
 router.get('/mutual/:contactPhone', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   const uid = req.uid!;
-  const { contactPhone } = req.params;
+  const contactPhone = normalizePhone(req.params.contactPhone);
 
   const session = getSession();
 
@@ -145,11 +146,11 @@ router.get('/mutual/:contactPhone', authMiddleware, async (req: AuthenticatedReq
     const result = await session.run(
       `
       MATCH (me:User {uid: $uid})-[:KNOWS]->(myContact:Contact)
-      MATCH (targetContact:Contact {phone: $contactPhone})-[:IS_USER]->(targetUser:User)-[:KNOWS]->(mutualContact:Contact)
-      WHERE myContact.phone = mutualContact.phone
+      MATCH (targetContact:Contact {phone: $contactPhone})-[:IS_USER]->(targetUser:User)-[:KNOWS]->(theirContact:Contact)
+      WHERE myContact.phone = theirContact.phone
         AND myContact.phone <> $contactPhone
         AND myContact.phone <> me.phone
-      OPTIONAL MATCH (mutualContact)-[:IS_USER]->(mutualUser:User)
+      OPTIONAL MATCH (myContact)-[:IS_USER]->(mutualUser:User)
       RETURN DISTINCT myContact.name AS name, 
              myContact.phone AS phone,
              CASE WHEN mutualUser IS NOT NULL THEN true ELSE false END AS isUser,
@@ -187,10 +188,81 @@ router.get('/mutual/:contactPhone', authMiddleware, async (req: AuthenticatedReq
       };
     }
 
+    // Find shortest INDIRECT connection path — i.e. how do you know this
+    // person through your network, EXCLUDING the direct KNOWS relationship.
+    // This is the core value of the app: "you just added Sarah — but did
+    // you know she's connected to you through Kate → Jane?"
+    let connectionPath: string[] | null = null;
+    let connectionDegree: number | null = null;
+
+    if (targetContact?.linkedUid) {
+      // First, find the direct Contact node that connects the current user to the target
+      // so we can exclude it from the indirect path search.
+      const directContactResult = await session.run(
+        `MATCH (me:User {uid: $uid})-[:KNOWS]->(dc:Contact {phone: $contactPhone})
+         RETURN elementId(dc) AS directContactId`,
+        { uid, contactPhone },
+      );
+
+      const directContactId = directContactResult.records.length > 0
+        ? directContactResult.records[0].get('directContactId')
+        : null;
+
+      // Find shortest path that does NOT go through the direct Contact node.
+      // This gives us the "how you're already connected through the network" path.
+      const pathResult = await session.run(
+        `
+        MATCH (start:User {uid: $uid}), (end:User {uid: $targetUid})
+        MATCH path = shortestPath((start)-[:KNOWS|IS_USER*]-(end))
+        WHERE $directContactId IS NULL
+           OR ALL(n IN nodes(path) WHERE elementId(n) <> $directContactId)
+        RETURN [node IN nodes(path) | COALESCE(node.name, node.email, node.uid)] AS names,
+               [node IN nodes(path) | labels(node)[0]] AS nodeLabels,
+               length(path) AS degree
+        `,
+        { uid, targetUid: targetContact.linkedUid, directContactId },
+      );
+
+      if (pathResult.records.length > 0) {
+        const pathRecord = pathResult.records[0];
+        const rawNames = pathRecord.get('names') as string[];
+        const nodeLabels = pathRecord.get('nodeLabels') as string[];
+        const rawDegree = pathRecord.get('degree') as any;
+        const rawDegreeNum = typeof rawDegree.toNumber === 'function'
+          ? rawDegree.toNumber()
+          : rawDegree;
+
+        // Build a clean people-only path by deduplicating consecutive
+        // Contact→IS_USER→User pairs where the same person appears twice.
+        // The raw path alternates User and Contact nodes:
+        //   User(You) → Contact(Kate) → User(Kate) → Contact(Jane) → User(Jane) ...
+        // We want:  You → Kate → Jane → ...
+        // BUT sometimes the path takes shortcuts (bidirectional traversal), e.g.:
+        //   User(You) → Contact(Kate) → User(Jane) → Contact(Jane) → User(Sarah)
+        // So we can't just blindly skip Contact nodes — we deduplicate by name.
+        const peoplePath: string[] = [];
+        for (let i = 0; i < rawNames.length; i++) {
+          const name = rawNames[i];
+          // Skip if this name is the same as the previous (Contact/User dupe)
+          if (peoplePath.length > 0 && peoplePath[peoplePath.length - 1] === name) continue;
+          peoplePath.push(name);
+        }
+
+        // Only show paths with 2+ degrees (i.e. at least one intermediary person)
+        const degree = peoplePath.length - 1; // number of hops between people
+        if (degree >= 2) {
+          connectionPath = peoplePath;
+          connectionDegree = degree;
+        }
+      }
+    }
+
     res.json({
       targetContact,
       mutualConnections,
       count: mutualConnections.length,
+      connectionPath,
+      connectionDegree,
     });
   } catch (error) {
     console.error('Failed to get mutual connections:', error);

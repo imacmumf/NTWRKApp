@@ -1,26 +1,9 @@
 import { Router, Response } from 'express';
 import { getSession } from '../config/neo4j';
 import { AuthenticatedRequest, authMiddleware } from '../middleware/auth';
+import { normalizePhone } from '../utils/normalizePhone';
 
 const router = Router();
-
-/**
- * Normalize a phone number to a consistent digits-only format.
- * Strips all non-digit characters, then ensures a leading "1" for US numbers
- * so that "+1 (555) 123-4567", "5551234567", and "15551234567" all become "15551234567".
- */
-function normalizePhone(raw: string): string {
-  // Strip everything except digits and a leading +
-  let digits = raw.replace(/[^\d]/g, '');
-
-  // If it starts with country code "1" and is 11 digits, that's US (+1...)
-  // If it's 10 digits, prepend "1" for US default
-  if (digits.length === 10) {
-    digits = '1' + digits;
-  }
-
-  return digits;
-}
 
 // Sync contacts to Neo4j
 router.post('/sync', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
