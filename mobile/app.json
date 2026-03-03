@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "NTWRK",
+    "slug": "ntwrk",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/NTWRK_App_Icon_Ready.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0A0E27"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.ntwrk.app",
+      "icon": "./assets/NTWRK_App_Icon_Ready.png"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "./plugins/withSwift59"
+    ]
+  }
+}
