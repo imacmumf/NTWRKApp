@@ -16,6 +16,7 @@ import {
   MutualConnection,
   MutualConnectionsData,
 } from '../services/apiService';
+import NetworkGraph from '../components/NetworkGraph';
 
 type ConnectionDetailsProps = NativeStackScreenProps<AppStackParamList, 'ConnectionDetails'>;
 
@@ -180,47 +181,16 @@ const ConnectionDetailsScreen: React.FC<ConnectionDetailsProps> = ({ route, navi
               </Text>
             </View>
 
-            {/* Connection Path (if available) — shows how you're ALREADY
-                connected through your network, excluding the direct link */}
+            {/* Connection Path — Neo4j-style network graph visualization */}
             {data?.connectionPath && data.connectionPath.length > 1 && (
               <View style={styles.pathSection}>
                 <Text style={styles.pathLabel}>
-                  🔗 Connected through {data.connectionDegree! - 1} {data.connectionDegree! - 1 === 1 ? 'person' : 'people'}
+                  🔗 Network Connection · {data.connectionDegree!}° of separation
                 </Text>
-                <View style={styles.pathChain}>
-                  {data.connectionPath.map((name, i) => (
-                    <View key={`${name}-${i}`} style={styles.pathItem}>
-                      <View
-                        style={[
-                          styles.pathDot,
-                          i === 0 && styles.pathDotYou,
-                          i === data.connectionPath!.length - 1 && styles.pathDotTarget,
-                        ]}
-                      >
-                        <Text style={styles.pathDotText}>
-                          {name
-                            .split(' ')
-                            .map((n) => n[0])
-                            .join('')
-                            .toUpperCase()
-                            .slice(0, 2)}
-                        </Text>
-                      </View>
-                      <Text
-                        style={[
-                          styles.pathName,
-                          i === 0 && styles.pathNameYou,
-                        ]}
-                        numberOfLines={1}
-                      >
-                        {i === 0 ? 'You' : name}
-                      </Text>
-                      {i < data.connectionPath!.length - 1 && (
-                        <Text style={styles.pathArrow}>→</Text>
-                      )}
-                    </View>
-                  ))}
-                </View>
+                <Text style={styles.pathSublabel}>
+                  Connected through {data.connectionDegree! - 1} {data.connectionDegree! - 1 === 1 ? 'person' : 'people'}
+                </Text>
+                <NetworkGraph path={data.connectionPath} />
               </View>
             )}
 
@@ -469,59 +439,19 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(123, 97, 255, 0.3)',
   },
   pathLabel: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '700',
     color: '#7B61FF',
     textAlign: 'center',
+    marginBottom: 4,
+  },
+  pathSublabel: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#8892B0',
+    textAlign: 'center',
     marginBottom: 16,
   },
-  pathChain: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexWrap: 'wrap',
-    gap: 4,
-  },
-  pathItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  pathDot: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#2A2F54',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  pathDotYou: {
-    backgroundColor: '#7B61FF',
-  },
-  pathDotTarget: {
-    backgroundColor: '#4A90D9',
-  },
-  pathDotText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#E6E6E6',
-  },
-  pathName: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#E6E6E6',
-    maxWidth: 70,
-  },
-  pathNameYou: {
-    color: '#7B61FF',
-    fontWeight: '700',
-  },
-  pathArrow: {
-    fontSize: 16,
-    color: '#7B61FF',
-    marginHorizontal: 2,
-  },
-
   /* ---- No indirect path state ---- */
   noPathSection: {
     marginHorizontal: 20,
