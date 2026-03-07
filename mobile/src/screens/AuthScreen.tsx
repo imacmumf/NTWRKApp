@@ -90,68 +90,51 @@ const AuthScreen: React.FC = () => {
       if (result.status === 'complete') {
         await setSignInActive({ session: result.createdSessionId });
       } else if (result.status === 'needs_first_factor') {
-        // Password was provided in create() but Clerk needs another first factor
         const factors = result.supportedFirstFactors ?? [];
         const strategies = factors.map((f: any) => f.strategy);
         console.log('First factor strategies:', JSON.stringify(factors));
-
-        if (strategies.includes('email_code')) {
-          const emailFactor = factors.find((f: any) => f.strategy === 'email_code') as any;
-          await signIn.prepareFirstFactor({ strategy: 'email_code', emailAddressId: emailFactor.emailAddressId });
-          console.log('✅ Email code sent successfully');
-          setSignInStrategy('email_code');
+        // Use the first available factor Clerk returns
+        const factor = factors[0];
+        if (factor) {
+          // Prepare using the exact strategy Clerk provides
+          const payload: any = { strategy: factor.strategy };
+          // Only add ids if present (type-safe)
+          if ('emailAddressId' in factor && factor.emailAddressId) payload.emailAddressId = factor.emailAddressId;
+          if ('phoneNumberId' in factor && factor.phoneNumberId) payload.phoneNumberId = factor.phoneNumberId;
+          await signIn.prepareFirstFactor(payload);
+          setSignInStrategy(factor.strategy);
           setPendingSignInVerification(true);
-        } else if (strategies.includes('phone_code')) {
-          const phoneFactor = factors.find((f: any) => f.strategy === 'phone_code') as any;
-          await signIn.prepareFirstFactor({ strategy: 'phone_code', phoneNumberId: phoneFactor.phoneNumberId });
-          console.log('✅ Phone code sent successfully');
-          setSignInStrategy('phone_code');
-          setPendingSignInVerification(true);
-        } else if (strategies.includes('password')) {
-          // Password is listed as a supported first factor — try it directly
-          const passResult = await signIn.attemptFirstFactor({
-            strategy: 'password',
-            password,
-          });
-          if (passResult.status === 'complete') {
-            await setSignInActive({ session: passResult.createdSessionId });
-          } else {
-            console.log('After password first factor:', passResult.status);
-            setError('Additional verification required after password.');
-          }
         } else {
-          setError(`Unsupported verification: ${strategies.join(', ')}. Check Clerk settings.`);
+          setError('No supported first factor found. Check Clerk settings.');
         }
       } else if (result.status === 'needs_second_factor') {
         const secondFactors = result.supportedSecondFactors ?? [];
-        const strategies = secondFactors.map((f: any) => f.strategy);
-        console.log('Second factor strategies:', JSON.stringify(secondFactors));
-
-        if (strategies.includes('phone_code')) {
-          await signIn.prepareSecondFactor({ strategy: 'phone_code' });
-          setSignInStrategy('phone_code_2fa');
-          setPendingSignInVerification(true);
-        } else if (strategies.includes('totp')) {
-          setSignInStrategy('totp');
-          setPendingSignInVerification(true);
-        } else if (strategies.includes('backup_code')) {
-          setSignInStrategy('backup_code');
-          setPendingSignInVerification(true);
-        } else if (secondFactors.length > 0) {
-          const fallback = secondFactors[0] as any;
-          try {
-            await signIn.prepareSecondFactor({ strategy: fallback.strategy });
-          } catch (e) {
-            // Some strategies don't need preparation
+        const factor = secondFactors[0];
+        if (factor) {
+          // Only call prepareSecondFactor for allowed strategies
+          if (factor.strategy === 'phone_code') {
+            try {
+              const payload: any = { strategy: 'phone_code' };
+              if ('phoneNumberId' in factor && factor.phoneNumberId) payload.phoneNumberId = factor.phoneNumberId;
+              await signIn.prepareSecondFactor(payload);
+            } catch (e) {}
+          } else if (factor.strategy === 'email_code' || factor.strategy === 'email_link') {
+            try {
+              const payload: any = { strategy: factor.strategy };
+              if ('emailAddressId' in factor && factor.emailAddressId) payload.emailAddressId = factor.emailAddressId;
+              await signIn.prepareSecondFactor(payload);
+            } catch (e) {}
           }
-          setSignInStrategy(fallback.strategy);
+          setSignInStrategy(factor.strategy);
           setPendingSignInVerification(true);
         } else {
           setError('Two-factor authentication required but no method available. Check Clerk dashboard.');
         }
       } else {
-        console.log('Unexpected sign-in status:', result.status);
-        setError('Sign-in requires additional steps. Please try again.');
+        // Show a clear error and allow user to try again
+        setError('Sign-in requires additional steps or an unsupported flow. Please check your Clerk dashboard settings or contact support.');
+        setPendingSignInVerification(false);
+        setSignInStrategy(null);
       }
     } catch (err: any) {
       console.log('Sign-in error:', JSON.stringify(err?.errors ?? err));

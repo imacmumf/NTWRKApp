@@ -14,7 +14,10 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.ntwrk.app",
-      "icon": "./assets/NTWRK_App_Icon_Ready.png"
+      "icon": "./assets/NTWRK_App_Icon_Ready.png",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -30,6 +33,11 @@
     },
     "plugins": [
       "./plugins/withSwift59"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "51cb0ec9-5ccc-424d-a0fa-64078187369f"
+      }
+    }
   }
 }
